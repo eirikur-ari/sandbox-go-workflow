@@ -15,6 +15,8 @@ LDFLAGS := -s -w
 
 WORKSPACE_FOLDER := $(CURDIR)
 
+DEVCONTAINER := bash scripts/devcontainer.sh
+
 ## help: Show this help
 .PHONY: help
 help:
@@ -96,3 +98,38 @@ coverage-html:
 .PHONY: package
 package:
 	bash scripts/package.sh
+
+## dev-start: Start the devcontainer
+.PHONY: dev-start
+dev-start:
+	@$(DEVCONTAINER) start
+
+## dev-rebuild: Rebuild the devcontainer from scratch
+.PHONY: dev-rebuild
+dev-rebuild:
+	@$(DEVCONTAINER) rebuild
+
+## dev-stop: Stop the devcontainer
+.PHONY: dev-stop
+dev-stop:
+	@$(DEVCONTAINER) stop
+
+## dev-shell: Open a shell in the devcontainer
+.PHONY: dev-shell
+dev-shell:
+	@$(DEVCONTAINER) shell
+
+## dev-copy: Copy a file or directory into the devcontainer
+.PHONY: dev-copy
+dev-copy:
+	$(DEVCONTAINER) copy "$(SOURCE)" $(if $(DESTINATION),"$(DESTINATION)")
+
+## dev-destroy: Remove the devcontainer and its image
+.PHONY: dev-destroy
+dev-destroy:
+	@$(DEVCONTAINER) destroy
+
+## dev-status: Show the status of the devcontainer
+.PHONY: dev-status
+dev-status:
+	@$(DEVCONTAINER) status

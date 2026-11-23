@@ -5,6 +5,13 @@ on:
     branches:
       - master
       - "release/**"
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - 'LICENSE'
+      - '.github/**'
+      - '.devcontainer/**'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       version:
@@ -16,6 +23,33 @@ permissions:
   contents: read
 
 jobs:
+  # TODO: version:
+
+  validation:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+        # TODO: fetch-depth: 0 - We need to fetch all history so that we can check if the tag already exists.
+
+      - name: Branch
+        run: bash .github/scripts/validate-release.sh branch
+      
+        # TODO: We should have a prior step or job that resolves the version changelog if not provided via input. This workflow should not continue if the version is not provided via input or cannot be resolved from the changelog.
+      - name: Version Format
+        run: bash .github/scripts/validate-release.sh version-format
+ 
+        # TODO: Read from git repo, not through GitHub API
+      - name: Tag Does Not Exist
+        run: bash .github/scripts/validate-release.sh tag
+
+        # TODO: Review this (should be in github specific script, not in generic script)
+      - name: Notes
+        run: bash .github/scripts/validate-release.sh release-notes
+
   static-analysis:
     name: Static analysis
     runs-on: ubuntu-latest
@@ -29,7 +63,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
          go-version-file: go.mod
-         cache-dependency-path: go.mod
+     #    cache-dependency-path: go.mod
 
       - name: Vet
         run: make vet
@@ -68,7 +102,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.mod
+        #  cache-dependency-path: go.mod
 
       - name: Build
         run: make build-all
@@ -114,4 +148,8 @@ jobs:
       - name: Acceptance Test
         run: make test-acceptance
         env:
-          DUMMY_BINARY: ${{ github.workspace }}/build/acceptance/dummy
+          DUMMY_BINARY: ${{ github.workspace }}/build/acceptance/dummy # TODO: This should be resolved by convention, not hardcoded here. The acceptance test should not know about the dummy project.
+
+  # TODO: attestation:
+
+  # TODO: publication:
