@@ -2,7 +2,8 @@
 # Runs one validation of the release version: branch, version-format, tag, release-notes or release.
 # Every validation requires RELEASE_VERSION in the environment, except branch and release.
 # branch requires GITHUB_REF and tag requires GITHUB_REPOSITORY and GH_TOKEN in the environment.
-# release resolves the release version, which is REQUESTED_VERSION when it is set and otherwise the latest version in the changelog,
+# release resolves the release version, which is REQUESTED_VERSION when it is set and otherwise the latest version in the changelog
+# when that is newer than the latest release tag merged into the branch, and none when it is not. It needs the full git history for that,
 # and requires GITHUB_REF, GITHUB_REPOSITORY, GH_TOKEN, GITHUB_OUTPUT and GITHUB_STEP_SUMMARY in the environment.
 set -euo pipefail
 
@@ -77,32 +78,52 @@ function unreleasedHasEntries() {
   [[ -n "$entries" ]]
 }
 
-# Writes the release version and whether it is releasable to the step output, and the reason to the step summary
+# Prints the version of the latest release tag merged into the current branch, nothing when there is none, and exits when the history is shallow
+function latestTagVersion() {
+  local shallow tags tag
+
+  shallow=$(git rev-parse --is-shallow-repository) || exit 1
+  if [[ "$shallow" == "true" ]]; then
+    echo "the full git history is needed to find the latest tag, but the repository is shallow" >&2
+    exit 1
+  fi
+  tags=$(git tag --merged HEAD --list 'v*' --sort=-v:refname) || exit 1
+  tag=$(sed -n '1p' <<< "$tags")
+  echo "${tag#v}"
+}
+
+# Succeeds when the given version is newer than the version of the latest release tag, or when there is no release tag
+function isNewerThanLatestTag() {
+  local version="$1" tag_version
+
+  tag_version=$(latestTagVersion) || exit 1
+  [[ -z "$tag_version" ]] && return 0
+  [[ "$version" != "$tag_version" && "$(printf '%s\n%s\n' "$version" "$tag_version" | LC_ALL=C sort -V | tail -n 1)" == "$version" ]]
+}
+
+# Writes the release version, which is empty when there is none, and whether it is releasable to the step output, and the reason to the step summary
 function writeResult() {
-  local releasable="$1" reason="$2"
+  local version="$1" releasable="$2" reason="$3"
 
   {
-    echo "version=$RELEASE_VERSION"
+    echo "version=$version"
     echo "releasable=$releasable"
   } >> "$GITHUB_OUTPUT"
   {
     echo "### Release validation"
     echo
-    echo "- Version: $RELEASE_VERSION"
+    echo "- Version: ${version:-none}"
     echo "- Releasable: $releasable ($reason)"
   } >> "$GITHUB_STEP_SUMMARY"
 }
 
-# Resolves the release version, validates it and writes whether it is releasable
-# A requested version must be the latest in the changelog, have no tag and the changelog no unreleased entries, otherwise it fails
-# Without a requested version it is not releasable when its tag exists or the changelog has unreleased entries
-function release() {
+# Validates the requested version and writes that it is releasable, or fails
+# It must be the latest in the changelog and have no tag, and the changelog must have no unreleased entries
+function releaseRequested() {
   local changelog_version
 
-  setup GITHUB_REF GITHUB_REPOSITORY GH_TOKEN GITHUB_OUTPUT GITHUB_STEP_SUMMARY
-  branch
   changelog_version=$(changelogVersion) || exit 1
-  RELEASE_VERSION="${REQUESTED_VERSION:-$changelog_version}"
+  RELEASE_VERSION="$REQUESTED_VERSION"
   export RELEASE_VERSION
   versionFormat
   if [[ "$RELEASE_VERSION" != "$changelog_version" ]]; then
@@ -110,20 +131,49 @@ function release() {
     exit 1
   fi
   releaseNotes
+  tag
+  if unreleasedHasEntries; then
+    echo "the Unreleased section of the changelog has entries"
+    exit 1
+  fi
+  writeResult "$RELEASE_VERSION" true "requested version"
+}
 
-  if [[ -n "${REQUESTED_VERSION:-}" ]]; then
-    tag
-    if unreleasedHasEntries; then
-      echo "the Unreleased section of the changelog has entries"
-      exit 1
-    fi
-    writeResult true "requested version"
-  elif tagExists; then
-    writeResult false "tag v$RELEASE_VERSION already exists"
+# Writes the latest version of the changelog as the release version when it is newer than the latest tag, has no tag and the changelog has no unreleased entries
+# Otherwise it writes no version and that it is not releasable, without validating anything
+function releaseFromChangelog() {
+  local changelog_version
+
+  if ! changelog_version=$(changelogVersion); then
+    writeResult "" false "no release version found in the changelog"
+    return
+  fi
+  if ! isNewerThanLatestTag "$changelog_version"; then
+    writeResult "" false "the changelog version $changelog_version is not newer than the latest tag"
+    return
+  fi
+
+  RELEASE_VERSION="$changelog_version"
+  export RELEASE_VERSION
+  versionFormat
+  releaseNotes
+  if tagExists; then
+    writeResult "" false "tag v$RELEASE_VERSION already exists"
   elif unreleasedHasEntries; then
-    writeResult false "the Unreleased section of the changelog has entries"
+    writeResult "" false "the Unreleased section of the changelog has entries"
   else
-    writeResult true "latest version of the changelog"
+    writeResult "$RELEASE_VERSION" true "the changelog version is newer than the latest tag"
+  fi
+}
+
+# Resolves the release version, from the request or else from the changelog, and writes whether it is releasable
+function release() {
+  setup GITHUB_REF GITHUB_REPOSITORY GH_TOKEN GITHUB_OUTPUT GITHUB_STEP_SUMMARY
+  branch
+  if [[ -n "${REQUESTED_VERSION:-}" ]]; then
+    releaseRequested
+  else
+    releaseFromChangelog
   fi
 }
 

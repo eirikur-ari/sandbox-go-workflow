@@ -1,8 +1,11 @@
 # shellcheck shell=bash
 # Shared setup for validate-release.bats.
-# Runs the script in a temp working directory with fake gh and make executables first on PATH, and fake changelog scripts under scripts/.
+# Runs the script in a temp working directory with fake gh, git and make executables first on PATH, and fake changelog scripts under scripts/.
 # The fakes are driven by environment variables, set per test:
 #   GH_MODE                   exists (default), missing (HTTP 404) or error (HTTP 500)
+#   GIT_TAGS                  newline separated release tags merged into the branch, which git tag lists newest first by version, default none
+#   GIT_SHALLOW               what git rev-parse --is-shallow-repository prints, default false
+#   GIT_FAIL                  when non-empty, git exits 128
 #   MAKE_FAIL                 when non-empty, make exits 1
 #   CHANGELOG_VERSION         version printed by changelog-version.sh, default 1.2.3
 #   CHANGELOG_VERSION_FAIL    when non-empty, changelog-version.sh exits 1
@@ -28,6 +31,14 @@ case "${GH_MODE:-exists}" in
   exists) echo '{"ref":"refs/tags/vX"}' ;;
   missing) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   error) echo "gh: Server Error (HTTP 500)" >&2; exit 1 ;;
+esac
+EOF
+  cat > "$TEST_TMP/bin/git" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${GIT_FAIL:-}" ]] || { echo "fatal: git failed" >&2; exit 128; }
+case "$1" in
+  rev-parse) echo "${GIT_SHALLOW:-false}" ;;
+  tag) [[ -z "${GIT_TAGS:-}" ]] || printf '%s\n' "$GIT_TAGS" | sort -rV ;;
 esac
 EOF
   cat > "$TEST_TMP/bin/make" <<'EOF'

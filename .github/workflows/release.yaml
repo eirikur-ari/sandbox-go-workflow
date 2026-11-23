@@ -37,6 +37,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Validate Release
         id: validate
@@ -45,6 +46,7 @@ jobs:
   validation:
     name: Validate Release
     needs: version
+    if: ${{ needs.version.outputs.releasable == 'true' }}
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.version.outputs.version }}
@@ -57,8 +59,7 @@ jobs:
 
       - name: Branch
         run: bash .github/scripts/validate-release.sh branch
-      
-        # TODO: We should have a prior step or job that resolves the version changelog if not provided via input. This workflow should not continue if the version is not provided via input or cannot be resolved from the changelog.
+
       - name: Version Format
         run: bash .github/scripts/validate-release.sh version-format
  
@@ -73,6 +74,7 @@ jobs:
   static-analysis:
     name: Static analysis
     needs: validation
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -95,6 +97,7 @@ jobs:
   test:
     name: Test
     needs: [validation, static-analysis]
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +115,7 @@ jobs:
   build:
     name: Build
     needs: [version, validation, static-analysis, test]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.version.outputs.version }}
@@ -143,6 +147,7 @@ jobs:
   acceptance:
     name: Acceptance Test
     needs: [validation, static-analysis, test, build]
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
