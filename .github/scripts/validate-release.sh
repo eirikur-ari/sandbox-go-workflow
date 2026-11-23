@@ -22,7 +22,7 @@ function setup() {
 function branch() {
   setup GITHUB_REF
   if [[ "$GITHUB_REF" != "refs/heads/master" && "$GITHUB_REF" != "refs/heads/release/*" ]]; then
-    echo "a release must be started from master or a release branch, not '$GITHUB_REF'"
+    echo "a release must be started from master or a release branch, not '$GITHUB_REF_NAME'"
     exit 1
   fi
 }
