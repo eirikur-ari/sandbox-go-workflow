@@ -1,3 +1,3 @@
-module github.com/eirikur-ari/github-workflow-sandbox/samples/golang/dummy
+module github.com/eirikur-ari/sandbox-go-workflow
 
 go 1.26.10

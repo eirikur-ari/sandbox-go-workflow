@@ -1,11 +1,15 @@
 # shellcheck shell=bash
 # Shared setup for the bats tests of the scripts in scripts/.
-# Each test runs in a temp workspace, set as WORKSPACE_FOLDER, with fake go, docker and devcontainer executables first on PATH.
-# The fakes append every call to go.log, docker.log and devcontainer.log in TEST_TMP, and are driven by environment variables set per test:
+# Each test runs in a temp workspace, set as WORKSPACE_FOLDER, with fake go, docker, devcontainer and git executables first on PATH.
+# The fakes append every call to go.log, docker.log, devcontainer.log and git.log in TEST_TMP, and are driven by environment variables set per test:
 #   FAKE_GOOS, FAKE_GOARCH   what go env GOOS and go env GOARCH print, default linux and amd64
 #   GO_ENV_FAIL              when non-empty, go env exits 1
 #   GO_BUILD_FAIL            when non-empty, go build exits 1
 #   GO_TEST_FAIL             when non-empty, go test exits 1
+#   GO_RUN_FAIL              when non-empty, go run exits 1
+#   FAKE_LICENSE_FILES       space separated paths that go run creates in the --save_path directory, each holding "license text of <path>"
+#                            the directory is only created when there is a path, as go-licenses does
+#   GIT_TAG                  what git describe prints, default nothing and failing as when there is no tag
 #   DOCKER_PS_IDS            what docker ps prints, default nothing
 #   DOCKER_INSPECT_OUT       what docker inspect prints, default nothing
 #   DOCKER_EXEC_DRYRUN       when non-empty, docker exec only logs and drains stdin, otherwise it runs the command it is given locally
@@ -32,7 +36,19 @@ case "$1" in
     case "$2" in
       GOOS) echo "${FAKE_GOOS:-linux}" ;;
       GOARCH) echo "${FAKE_GOARCH:-amd64}" ;;
+      GOROOT) echo "$TEST_TMP/goroot" ;;
     esac
+    ;;
+  run)
+    [[ -z "${GO_RUN_FAIL:-}" ]] || exit 1
+    echo "run cwd=$PWD args=$*" >> "$TEST_TMP/go.log"
+    for arg in "$@"; do
+      [[ "$arg" != --save_path=* ]] || save_path="${arg#--save_path=}"
+    done
+    for file in ${FAKE_LICENSE_FILES:-}; do
+      mkdir -p "$save_path/$(dirname "$file")"
+      echo "license text of $file" > "$save_path/$file"
+    done
     ;;
   build)
     [[ -z "${GO_BUILD_FAIL:-}" ]] || exit 1
@@ -73,7 +89,19 @@ EOF
 #!/usr/bin/env bash
 echo "devcontainer $*" >> "$TEST_TMP/devcontainer.log"
 EOF
+  cat > "$TEST_TMP/bin/git" <<'EOF'
+#!/usr/bin/env bash
+echo "git $*" >> "$TEST_TMP/git.log"
+case "$1" in
+  describe)
+    [[ -n "${GIT_TAG:-}" ]] || { echo "fatal: No names found, cannot describe anything." >&2; exit 128; }
+    echo "$GIT_TAG"
+    ;;
+esac
+EOF
   chmod +x "$TEST_TMP"/bin/*
+  mkdir -p "$TEST_TMP/goroot"
+  echo "Go license text" > "$TEST_TMP/goroot/LICENSE"
 
   # The scripts move to the workspace themselves, so start somewhere else to show it
   cd "$TEST_TMP" || return 1
@@ -93,6 +121,52 @@ function run_script() {
   local script="$1"
   shift
   run bash "$SCRIPTS/$script" "$@"
+}
+
+# Runs the given script of scripts/ from the workspace, for the scripts that read the files of the current directory
+function run_in_workspace() {
+  cd "$WORKSPACE_FOLDER" || return 1
+  run_script "$@"
+}
+
+# Writes the standard input to CHANGELOG.md in the workspace
+function write_changelog() {
+  cat > "$WORKSPACE_FOLDER/CHANGELOG.md"
+}
+
+# Writes a changelog with an Unreleased section and two releases, 1.2.3 and 1.2.2, and the link references of the footer
+function write_standard_changelog() {
+  write_changelog <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- Unreleased entry
+
+## [1.2.3] - 2026-01-02
+
+### Fixed
+
+- Fix three
+
+## [1.2.2] - 2026-01-01
+
+### Added
+
+- Add two
+
+[Unreleased]: https://example.com/compare/v1.2.3...HEAD
+[1.2.3]: https://example.com/compare/v1.2.2...v1.2.3
+[1.2.2]: https://example.com/releases/tag/v1.2.2
+EOF
+}
+
+# Copies the given script of scripts/ into the scripts directory of the workspace, for the scripts that call it by relative path
+function install_script() {
+  mkdir -p "$WORKSPACE_FOLDER/scripts"
+  cp "$SCRIPTS/$1" "$WORKSPACE_FOLDER/scripts/$1"
 }
 
 # Creates a gzipped tar archive at the given path holding one file named after the second argument

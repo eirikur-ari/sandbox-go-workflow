@@ -1,19 +1,9 @@
 # dummy Makefile
 
 BINARY_NAME := dummy
-
 BUILD_DIR := build
 BIN_DIR := bin
-
 DIST_DIR := $(BUILD_DIR)/dist
-PACKAGE_DIR := $(BUILD_DIR)/package
-
-OS := $(shell go env GOOS)
-ARCH := $(shell go env GOARCH)
-
-LDFLAGS := -s -w
-
-WORKSPACE_FOLDER := $(CURDIR)
 
 DEVCONTAINER := bash scripts/devcontainer.sh
 
@@ -27,12 +17,6 @@ help:
 ## all: Run every task
 .PHONY: all
 all: clean vet fmt-lint test coverage coverage-html build test-acceptance
-
-## clean: Remove build artifacts
-.PHONY: clean
-clean:
-	@echo "Running clean..."
-	@rm -rf $(BIN_DIR) $(BUILD_DIR)
 
 ## vet: Run go vet on all packages, including the integration and acceptance tests
 .PHONY: vet
@@ -94,10 +78,52 @@ coverage-summary:
 coverage-html:
 	go tool cover -html=$(BUILD_DIR)/coverage.out -o $(BUILD_DIR)/coverage.html
 
+## licenses: Collect the licenses of the third-party software compiled into the binary
+.PHONY: licenses
+licenses:
+	bash scripts/third-party-licenses.sh
+
 ## package: Package the binary and related files into a tar.gz archive
 .PHONY: package
 package:
 	bash scripts/package.sh
+
+## checksums: Write the SHA-256 checksums of the release archives
+.PHONY: checksums
+checksums:
+	cd $(DIST_DIR) && shasum -a 256 *.tar.gz > checksums.txt
+
+## changelog-version: Print the version of the latest release in the changelog
+.PHONY: changelog-version
+changelog-version:
+	@bash scripts/changelog-version.sh
+
+## changelog-unreleased: Print the entries of the Unreleased section of the changelog
+.PHONY: changelog-unreleased
+changelog-unreleased:
+	@bash scripts/changelog-unreleased.sh
+
+## release-notes: Write the release notes of a version from the changelog to a file, then print them
+.PHONY: release-notes
+release-notes: release-notes-file
+	cat $(BUILD_DIR)/release-notes.md
+
+## release-notes-content: Print the release notes of a version from the changelog, failing if there are none
+.PHONY: release-notes-content
+release-notes-content:
+	bash scripts/release-notes.sh
+
+## release-notes-file: Write the release notes of a version from the changelog to a file, failing if there are none
+.PHONY: release-notes-file
+release-notes-file:
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/release-notes.sh > $(BUILD_DIR)/release-notes.md || { rm -f $(BUILD_DIR)/release-notes.md; exit 1; }
+
+## clean: Remove build artifacts
+.PHONY: clean
+clean:
+	@echo "Running clean..."
+	@rm -rf $(BIN_DIR) $(BUILD_DIR)
 
 ## dev-start: Start the devcontainer
 .PHONY: dev-start
