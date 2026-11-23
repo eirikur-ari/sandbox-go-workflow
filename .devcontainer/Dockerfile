@@ -2,10 +2,13 @@ FROM golang:1.26.10-trixie
 
 ARG TZ=UTC
 ARG CLAUDE_CODE_VERSION=2.1.311
+ARG ACTIONLINT_VERSION=v1.7.12
+ARG ACTIONLINT_COMMIT=914e7df21a07ef503a81201c76d2b11c789d3fca
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        aggregate \
+       bats \
        ca-certificates \
        curl \
        dnsutils \
@@ -106,6 +109,14 @@ ENV NPM_CONFIG_PREFIX="/usr/local/share/npm-global" \
 
 # Needs to be set seperately from the other ENV variables to ensure that it is expanded correctly
 ENV PATH="${PATH}:/home/${USERNAME}/bin:/home/${USERNAME}/.local/bin:/usr/local/share/npm-global/bin:${GOPATH}/bin:${GOROOT}/bin"
+
+# Install actionlint
+RUN GOMODCACHE=/tmp/gomod GOCACHE=/tmp/gocache GOFLAGS=-modcacherw \
+    GOTOOLCHAIN=local GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
+    GOPRIVATE= GONOPROXY= GONOSUMDB= GOINSECURE= \
+       go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_COMMIT}" \
+    && rm -rf /tmp/gomod /tmp/gocache \
+    && actionlint -version | head -n 1 | grep -qxF "${ACTIONLINT_VERSION}"
 
 # Install Claude Code CLI
 COPY files/claude/claude-install.sh /home/${USERNAME}/claude-install.sh

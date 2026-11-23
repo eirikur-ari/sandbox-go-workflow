@@ -154,6 +154,7 @@ function addDomains() {
     "sum.golang.org" \
     "golang.org" \
     "go.dev" \
+    "vuln.go.dev" \
     "storage.googleapis.com"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')

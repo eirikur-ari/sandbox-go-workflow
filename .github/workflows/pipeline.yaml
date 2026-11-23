@@ -1,0 +1,89 @@
+name: Pipeline Checks
+
+on:
+  push:
+    paths:
+      - '.github/**'
+      - 'scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  workflows:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    # Keep Go from using anything that is not pinned and verified
+    env:
+      GOTOOLCHAIN: local
+      GOPROXY: https://proxy.golang.org
+      GOSUMDB: sum.golang.org
+      GOFLAGS: -mod=readonly
+      GOPRIVATE: ""
+      GONOPROXY: ""
+      GONOSUMDB: ""
+      GOINSECURE: ""
+      CGO_ENABLED: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.11'
+          cache: false
+
+      - name: Install govulncheck
+        run: GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@ef4cb2f7cae47fe3e21fc596455f694951867b29 # v1.10.0
+
+      - name: Install actionlint
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/rhysd/actionlint/cmd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+      - name: Scan govulncheck for vulnerabilities
+        run: |
+          echo "### govulncheck" >> "$GITHUB_STEP_SUMMARY"
+          "$RUNNER_TEMP/bin/govulncheck" -mode=binary "$RUNNER_TEMP/bin/govulncheck" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Scan actionlint for vulnerabilities
+        if: ${{ !cancelled() }}
+        run: |
+          echo "### actionlint" >> "$GITHUB_STEP_SUMMARY"
+          "$RUNNER_TEMP/bin/govulncheck" -mode=binary "$RUNNER_TEMP/bin/actionlint" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Lint workflows
+        run: |
+          "$RUNNER_TEMP/bin/actionlint" -color
+
+  scripts:
+    name: Lint and test scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bats
+
+      - name: Lint scripts
+        run: |
+          shellcheck -x scripts/*.sh scripts/lib/*.sh .github/scripts/*.sh
+          shellcheck -x -s bash scripts/test/helpers.bash .github/scripts/test/helpers.bash
+
+      - name: Test scripts
+        run: bats scripts/test .github/scripts/test

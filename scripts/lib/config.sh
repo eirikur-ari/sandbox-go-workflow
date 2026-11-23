@@ -12,4 +12,5 @@
 : "${PACKAGE_DIR:=$BUILD_DIR/package}"
 
 # Platforms the release is built for, as <goos>/<goarch>
+# shellcheck disable=SC2034 # used by the scripts that source this file
 TARGETS=(linux/amd64 linux/arm64 darwin/amd64 darwin/arm64)
