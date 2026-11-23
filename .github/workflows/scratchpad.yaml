@@ -1,5 +1,6 @@
 name: Scratchpad
-description: Scratchpad for testing GitHub Actions workflows
+
+# Scratchpad for testing GitHub Actions workflows
 
 on:
   workflow_dispatch:
@@ -17,7 +18,7 @@ jobs:
           persist-credentials: false
 
       - name: Smu
-        run: echo "Smu!!!!!" >> $GITHUB_STEP_SUMMARY
+        run: echo "Smu!!!!!" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Show how the group expression evaluates
         run: |
