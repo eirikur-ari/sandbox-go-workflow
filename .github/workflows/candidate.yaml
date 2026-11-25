@@ -1,0 +1,81 @@
+name: Release Candidate
+
+on:
+  push:
+    branches:
+      - master
+      - "release/**"
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - 'LICENSE'
+      - '.github/**'
+      - '.devcontainer/**'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, for example 1.2.3
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Resolve and Validate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      releasable: ${{ steps.resolve.outputs.releasable }}
+    env:
+      REQUESTED_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve Version
+        id: resolve
+        run: bash .github/scripts/task.sh resolve-version
+
+      - name: Version Format
+        if: ${{ steps.resolve.outputs.releasable == 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.resolve.outputs.version }}
+        run: bash .github/scripts/task.sh check-version-format
+
+      - name: Branch
+        if: ${{ steps.resolve.outputs.releasable == 'true' }}
+        run: bash .github/scripts/task.sh check-branch
+
+      - name: Tag Does Not Exist
+        if: ${{ steps.resolve.outputs.releasable == 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.resolve.outputs.version }}
+        run: bash .github/scripts/task.sh check-tag
+
+      - name: Changelog
+        if: ${{ steps.resolve.outputs.releasable == 'true' }}
+        run: bash .github/scripts/task.sh check-changelog
+
+      - name: Notes
+        if: ${{ steps.resolve.outputs.releasable == 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.resolve.outputs.version }}
+        run: bash .github/scripts/task.sh check-release-notes
+
+  build:
+    name: Build
+    needs: version
+    uses: ./.github/workflows/build.yaml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      releasable: ${{ needs.version.outputs.releasable == 'true' }}
+
+  # TODO: attestation:
+
+  # TODO: publication:

@@ -2,6 +2,18 @@ name: Build
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: Version stamped into the build, empty for a dev build
+        required: false
+        type: string
+        default: ""
+      releasable:
+        description: Whether the build is a release candidate, which keeps its archives longer
+        required: false
+        type: boolean
+        default: false
   push:
     paths-ignore:
       - '**.md'
@@ -16,7 +28,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # One group per branch for its own runs, and one per run when called, so that a caller's builds are never cancelled
+  group: ${{ github.workflow == 'Build' && format('build-{0}', github.ref) || format('build-{0}', github.run_id) }}
   cancel-in-progress: true
 
 jobs:
@@ -36,10 +49,10 @@ jobs:
         # cache-dependency-path: go.sum
 
       - name: Vet
-        run: make vet
+        run: bash .github/scripts/task.sh vet
 
       - name: Lint
-        run: make lint
+        run: bash .github/scripts/task.sh fmt-lint
             
   test:
     name: Test
@@ -56,12 +69,14 @@ jobs:
           persist-credentials: false
 
       - name: Test
-        run: make test
+        run: bash .github/scripts/task.sh test
   
   build:
     name: Build & Package
     needs: [static-analysis, test]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,23 +90,56 @@ jobs:
           # cache-dependency-path: go.sum
 
       - name: Build
-        run: make build-all
+        run: |
+          bash .github/scripts/task.sh build-all
 
       - name: Package
-        run: make package
+        run: |
+          bash .github/scripts/task.sh package-all
 
       - name: Upload Archives
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: build/dist
-          retention-days: 7
+          retention-days: ${{ inputs.releasable && 30 || 7 }}
+
+  acceptance:
+    name: Acceptance Test
+    needs: [static-analysis, test, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest] #, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download Archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: build/dist
+
+      - name: Extract Archive
+        run: bash .github/scripts/task.sh acceptance-extract
+
+      - name: Acceptance Test
+        run: bash .github/scripts/task.sh acceptance-test
 
   build-ok:
     # The required check. Passes when everything passed or was skipped because
     # only docs changed; fails on any failure or cancellation.
     name: Build OK
-    needs: [static-analysis, test, build]
+    needs: [static-analysis, test, build, acceptance]
     if: ${{ always() }}
     permissions: {}
     runs-on: ubuntu-latest
@@ -104,6 +152,7 @@ jobs:
             echo "| static-analysis | ${{ needs.static-analysis.result }} |"
             echo "| test | ${{ needs.test.result }} |"
             echo "| build | ${{ needs.build.result }} |"
+            echo "| acceptance | ${{ needs.acceptance.result }} |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Fail if a job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')

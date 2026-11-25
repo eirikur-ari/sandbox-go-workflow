@@ -26,10 +26,10 @@ func TestAcceptance_Add_PrintsOutput(t *testing.T) {
 
 func dummyBinary(t *testing.T) string {
 	t.Helper()
-	binary := os.Getenv("DUMMY_BINARY")
+	binary := os.Getenv("APP_BINARY")
 
 	if binary == "" {
-		t.Fatal("DUMMY_BINARY environment variable is not set; run via make test-acceptance")
+		t.Fatal("APP_BINARY environment variable is not set; run via make acceptance-test")
 	}
 
 	return binary

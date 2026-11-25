@@ -46,11 +46,11 @@ jobs:
          # cache-dependency-path: go.mod
 
       - name: Test with Coverage
-        run: make coverage
+        run: bash .github/scripts/task.sh coverage
 
       - name: Coverage Summary
         run: |
-          coverage=$(make --silent coverage-summary)
+          coverage=$(bash .github/scripts/task.sh coverage-summary)
           echo "### Coverage: $coverage" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Coverage Report

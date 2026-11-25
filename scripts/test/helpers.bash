@@ -1,21 +1,26 @@
 # shellcheck shell=bash
 # Shared setup for the bats tests of the scripts in scripts/.
-# Each test runs in a temp workspace, set as WORKSPACE_FOLDER, with fake go, docker, devcontainer and git executables first on PATH.
+# Each test runs in a temp workspace, set as WORKSPACE_FOLDER, with fake go, gofmt, shasum, docker, devcontainer and git executables first on PATH.
 # The fakes append every call to go.log, docker.log, devcontainer.log and git.log in TEST_TMP, and are driven by environment variables set per test:
 #   FAKE_GOOS, FAKE_GOARCH   what go env GOOS and go env GOARCH print, default linux and amd64
 #   GO_ENV_FAIL              when non-empty, go env exits 1
 #   GO_BUILD_FAIL            when non-empty, go build exits 1
 #   GO_TEST_FAIL             when non-empty, go test exits 1
 #   GO_RUN_FAIL              when non-empty, go run exits 1
+#   GO_VET_FAIL              when non-empty, go vet exits 1
+#   FAKE_UNFORMATTED         what gofmt -l prints, default nothing
 #   FAKE_LICENSE_FILES       space separated paths that go run creates in the --save_path directory, each holding "license text of <path>"
 #                            the directory is only created when there is a path, as go-licenses does
 #   GIT_TAG                  what git describe prints, default nothing and failing as when there is no tag
+#   GIT_TAGS                 newline separated release tags, which git tag lists newest first by version and git show-ref finds, default none
+#   GIT_SHALLOW              what git rev-parse --is-shallow-repository prints, default false
+#   GIT_FAIL                 when non-empty, git exits 128
 #   DOCKER_PS_IDS            what docker ps prints, default nothing
 #   DOCKER_INSPECT_OUT       what docker inspect prints, default nothing
 #   DOCKER_EXEC_DRYRUN       when non-empty, docker exec only logs and drains stdin, otherwise it runs the command it is given locally
 # go build creates the file given with -o, containing "binary <GOOS>/<GOARCH>".
 
-SCRIPTS="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Creates the temp workspace and the fake executables before each test
 function setup() {
@@ -25,7 +30,7 @@ function setup() {
   export PATH="$TEST_TMP/bin:$PATH"
 
   # Start from the defaults of lib/config.sh whatever the environment of the caller
-  unset BINARY_NAME BUILD_DIR BIN_DIR DIST_DIR PACKAGE_DIR ACCEPTANCE_DIR DUMMY_BINARY RELEASE_VERSION DC_SHELL
+  unset BINARY_NAME BUILD_DIR BIN_DIR DIST_DIR PACKAGE_DIR APP_BINARY RELEASE_VERSION DC_SHELL
   export WORKSPACE_FOLDER="$TEST_TMP/ws"
 
   cat > "$TEST_TMP/bin/go" <<'EOF'
@@ -61,9 +66,19 @@ case "$1" in
     echo "binary $GOOS/$GOARCH" > "$out"
     chmod +x "$out"
     ;;
+  vet)
+    [[ -z "${GO_VET_FAIL:-}" ]] || exit 1
+    echo "vet args=$*" >> "$TEST_TMP/go.log"
+    ;;
+  tool)
+    echo "tool args=$*" >> "$TEST_TMP/go.log"
+    if [[ "$2" == cover && "$3" == -func=* ]]; then
+      printf 'example.com/dummy/main.go:3:\tmain\t100.0%%\ntotal:\t(statements)\t85.0%%\n'
+    fi
+    ;;
   test)
     [[ -z "${GO_TEST_FAIL:-}" ]] || exit 1
-    echo "test DUMMY_BINARY=${DUMMY_BINARY:-} cwd=$PWD args=$*" >> "$TEST_TMP/go.log"
+    echo "test APP_BINARY=${APP_BINARY:-} cwd=$PWD args=$*" >> "$TEST_TMP/go.log"
     ;;
 esac
 EOF
@@ -92,12 +107,29 @@ EOF
   cat > "$TEST_TMP/bin/git" <<'EOF'
 #!/usr/bin/env bash
 echo "git $*" >> "$TEST_TMP/git.log"
+[[ -z "${GIT_FAIL:-}" ]] || { echo "fatal: git failed" >&2; exit 128; }
 case "$1" in
   describe)
     [[ -n "${GIT_TAG:-}" ]] || { echo "fatal: No names found, cannot describe anything." >&2; exit 128; }
     echo "$GIT_TAG"
     ;;
+  rev-parse) echo "${GIT_SHALLOW:-false}" ;;
+  tag) [[ -z "${GIT_TAGS:-}" ]] || printf '%s\n' "$GIT_TAGS" | sort -rV ;;
+  show-ref)
+    ref="${*: -1}"
+    grep -qxF "${ref#refs/tags/}" <<< "${GIT_TAGS:-}"
+    ;;
 esac
+EOF
+  cat > "$TEST_TMP/bin/gofmt" <<'EOF'
+#!/usr/bin/env bash
+echo "gofmt $*" >> "$TEST_TMP/go.log"
+[[ -z "${FAKE_UNFORMATTED:-}" ]] || printf '%s\n' "$FAKE_UNFORMATTED"
+EOF
+  cat > "$TEST_TMP/bin/shasum" <<'EOF'
+#!/usr/bin/env bash
+shift 2
+sha256sum "$@"
 EOF
   chmod +x "$TEST_TMP"/bin/*
   mkdir -p "$TEST_TMP/goroot"
@@ -163,18 +195,27 @@ function write_standard_changelog() {
 EOF
 }
 
-# Copies the given script of scripts/ into the scripts directory of the workspace, for the scripts that call it by relative path
-function install_script() {
-  mkdir -p "$WORKSPACE_FOLDER/scripts"
-  cp "$SCRIPTS/$1" "$WORKSPACE_FOLDER/scripts/$1"
+# Copies the task dispatcher and its configuration into the workspace, with an empty tasks directory
+function install_dispatcher() {
+  mkdir -p "$WORKSPACE_FOLDER/scripts/lib" "$WORKSPACE_FOLDER/scripts/tasks"
+  cp "$SCRIPTS/task.sh" "$WORKSPACE_FOLDER/scripts/task.sh"
+  cp "$SCRIPTS/lib/config.sh" "$WORKSPACE_FOLDER/scripts/lib/config.sh"
 }
 
-# Creates a gzipped tar archive at the given path holding one file named after the second argument
-function make_archive() {
-  local archive="$1" file="$2" content
-  content="$(mktemp -d)"
-  echo "$file" > "$content/$file"
-  mkdir -p "$(dirname "$archive")"
-  tar -czf "$archive" -C "$content" .
-  rm -rf "$content"
+# Copies the given task of scripts/tasks into the workspace, next to the task dispatcher, for the tasks that call it through the dispatcher
+function install_task() {
+  install_dispatcher
+  cp "$SCRIPTS/tasks/$1.sh" "$WORKSPACE_FOLDER/scripts/tasks/$1.sh"
+}
+
+# Adds a task to the workspace with the given name, description and commands
+function add_task() {
+  local name="$1" description="$2" commands="$3"
+
+  printf '#!/usr/bin/env bash\n# %s\n%s\n' "$description" "$commands" > "$WORKSPACE_FOLDER/scripts/tasks/$name.sh"
+}
+
+# Runs the task dispatcher of the workspace with the given arguments, capturing status and output (stdout and stderr) in bats' $status and $output
+function run_task() {
+  run bash "$WORKSPACE_FOLDER/scripts/task.sh" "$@"
 }

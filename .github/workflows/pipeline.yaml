@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/**'
       - 'scripts/**'
+      - 'Makefile'
   workflow_dispatch:
 
 permissions:
@@ -82,8 +83,8 @@ jobs:
 
       - name: Lint scripts
         run: |
-          shellcheck -x scripts/*.sh scripts/lib/*.sh .github/scripts/*.sh
+          shellcheck -x scripts/*.sh scripts/lib/*.sh scripts/tasks/*.sh .github/scripts/*.sh .github/scripts/tasks/*.sh
           shellcheck -x -s bash scripts/test/helpers.bash .github/scripts/test/helpers.bash
 
       - name: Test scripts
-        run: bats scripts/test .github/scripts/test
+        run: bats --recursive scripts/test .github/scripts/test

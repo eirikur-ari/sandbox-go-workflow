@@ -32,10 +32,10 @@ jobs:
           # cache-dependency-path: go.mod
 
       - name: Build
-        run: make build-all
+        run: bash .github/scripts/task.sh build-all
 
       - name: Package
-        run: make package
+        run: bash .github/scripts/task.sh package-all
       
       - name: Upload Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -70,9 +70,7 @@ jobs:
           path: build/dist
 
       - name: Extract Archive
-        run: bash scripts/acceptance-test.sh extract
+        run: bash .github/scripts/task.sh acceptance-extract
 
       - name: Acceptance Test
-        run: make test-acceptance
-        env:
-          DUMMY_BINARY: ${{ github.workspace }}/build/acceptance/dummy
+        run: bash .github/scripts/task.sh acceptance-test
